@@ -6,7 +6,7 @@ import {
   LoaderCircle, LockKeyhole, LogOut, Plus, Search, ShieldCheck, Sparkles,
   Star, StickyNote, Trash2, Upload, X
 } from 'lucide-react'
-import { supabase, BUCKET, MAX_FILE_BYTES } from './supabase'
+import { supabase, BUCKET, MAX_FILE_BYTES, clearLocalAuthSession, isInvalidSessionError } from './supabase'
 import { LinkDeviceModal, CodeSignIn } from './DevicePairing'
 
 const categories = [
@@ -226,6 +226,7 @@ function App() {
   const [toast, setToast] = useState(null)
   const inputRef = useRef(null)
   const toastTimer = useRef(null)
+  const logoutInProgress = useRef(false)
   const user = session?.user
 
   function notify(message, type = 'good') {
@@ -237,9 +238,36 @@ function App() {
   useEffect(() => {
     if (!supabase) { setAuthLoading(false); return }
     let active = true
-    supabase.auth.getSession().then(({ data, error }) => {
+    supabase.auth.getSession().then(async ({ data, error }) => {
       if (!active) return
-      if (error) setToast({ message: error.message, type: 'error' })
+      if (error && isInvalidSessionError(error)) {
+        clearLocalAuthSession()
+        setSession(null)
+        setAuthLoading(false)
+        return
+      }
+      if (error) {
+        setToast({ message: error.message, type: 'error' })
+        setAuthLoading(false)
+        return
+      }
+      // A stored JWT can outlive a revoked server-side session.
+      // Verify the user before showing private workspace content.
+      if (data.session) {
+        const { error: userError } = await supabase.auth.getUser()
+        if (!active) return
+        if (isInvalidSessionError(userError)) {
+          clearLocalAuthSession()
+          setSession(null)
+          setAuthLoading(false)
+          return
+        }
+        if (userError) {
+          setToast({ message: 'Could not verify your session. Check your connection and refresh.', type: 'error' })
+          setAuthLoading(false)
+          return
+        }
+      }
       setSession(data.session)
       setAuthLoading(false)
     }).catch(err => {
@@ -406,8 +434,32 @@ function App() {
   }
 
   async function logout() {
-    const { error } = await supabase.auth.signOut()
-    if (error) notify(error.message, 'error')
+    if (logoutInProgress.current) return
+    logoutInProgress.current = true
+    try {
+      // Local scope preserves sessions on phones, laptops, and other linked devices.
+      const { error } = await supabase.auth.signOut({ scope: 'local' })
+      if (error && !isInvalidSessionError(error)) {
+        notify('Unable to sign out. Please retry: ' + error.message, 'error')
+        return
+      }
+      // If the server already revoked this session, clean up the stale local token.
+      if (error) clearLocalAuthSession()
+      setSession(null)
+      setItems([])
+      setPairModal(false)
+    } catch (error) {
+      if (isInvalidSessionError(error)) {
+        clearLocalAuthSession()
+        setSession(null)
+        setItems([])
+        setPairModal(false)
+      } else {
+        notify('Unable to sign out. Please retry: ' + (error.message || 'Unknown error'), 'error')
+      }
+    } finally {
+      logoutInProgress.current = false
+    }
   }
 
   function receiveDrop(e) {
