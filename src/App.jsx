@@ -7,6 +7,7 @@ import {
   Star, StickyNote, Trash2, Upload, X
 } from 'lucide-react'
 import { supabase, BUCKET, MAX_FILE_BYTES } from './supabase'
+import { LinkDeviceModal, CodeSignIn } from './DevicePairing'
 
 const categories = [
   { id: 'all', label: 'All items', icon: LayoutGrid },
@@ -78,6 +79,7 @@ function SetupScreen() {
 
 function AuthScreen() {
   const [mode, setMode] = useState('signin')
+  const [codeMode, setCodeMode] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
@@ -121,7 +123,7 @@ function AuthScreen() {
         <div className="mobile-brand"><Logo /></div>
         <div className="auth-content">
           <span className="eyebrow"><span className="eyebrow-dot" /> WELCOME TO DROPSPACE</span>
-          <h2>{mode === 'signin' ? 'Welcome back' : 'Create your space'}</h2>
+          {codeMode ? <CodeSignIn onBack={() => setCodeMode(false)} /> : <><h2>{mode === 'signin' ? 'Welcome back' : 'Create your space'}</h2>
           <p className="muted">{mode === 'signin' ? 'Sign in to access everything you saved.' : 'Start saving your files, notes and links in one place.'}</p>
           <div className="auth-tabs" role="tablist">
             <button className={mode === 'signin' ? 'selected' : ''} onClick={() => { setMode('signin'); setError(''); setFeedback('') }} type="button">Sign in</button>
@@ -137,7 +139,8 @@ function AuthScreen() {
               {mode === 'signin' ? 'Sign in to DropSpace' : 'Create my space'}
             </button>
           </form>
-          <div className="auth-security"><ShieldCheck size={16} /> Protected with Supabase Auth and private storage</div>
+          <button type="button" className="pair-back pair-auth-link" onClick={() => { setCodeMode(true); setError(""); setFeedback("") }}>Sign in with a device code</button>
+          <div className="auth-security"><ShieldCheck size={16} /> Protected with Supabase Auth and private storage</div></>}
         </div>
       </div>
     </div>
@@ -217,6 +220,7 @@ function App() {
   const [view, setView] = useState('grid')
   const [sort, setSort] = useState('new')
   const [compose, setCompose] = useState(null)
+  const [pairModal, setPairModal] = useState(false)
   const [busy, setBusy] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [toast, setToast] = useState(null)
@@ -437,6 +441,7 @@ function App() {
             <p>{formatBytes(usedBytes)} used in {fileCount} {fileCount === 1 ? 'file' : 'files'}</p>
             <small>Per-file limit: 50 MB. Total quota depends on your Supabase plan.</small>
           </div>
+          <button className="btn btn-subtle pair-sidebar-button" onClick={() => setPairModal(true)}><Link2 size={16}/> Link device</button>
           <div className="account-area">
             <span className="avatar">{user.email?.[0]?.toUpperCase() || 'U'}</span>
             <div className="account-details"><strong>My workspace</strong><span title={user.email}>{user.email}</span></div>
@@ -451,6 +456,7 @@ function App() {
           <div className="breadcrumbs"><span>Workspace</span><span>/</span><strong>{categories.find(c => c.id === tab)?.label}</strong></div>
           <div className="topbar-actions">
             <span className="secure-pill"><ShieldCheck size={15} /> Private space</span>
+            <button className="btn btn-subtle pair-topbar-button" onClick={() => setPairModal(true)}><Link2 size={15}/> Link device</button>
             <button className="mobile-signout icon-btn" aria-label="Sign out" title="Sign out" onClick={logout}><LogOut size={19} /></button>
             <span className="topbar-avatar">{user.email?.[0]?.toUpperCase() || 'U'}</span>
           </div>
@@ -514,6 +520,7 @@ function App() {
         </main>
       </div>
 
+      {pairModal && <LinkDeviceModal onClose={() => setPairModal(false)} />}
       {compose && <ComposerModal key={compose} kind={compose} onClose={() => !busy && setCompose(null)} onSave={saveEntry} busy={busy} />}
       {toast && <div className={`toast ${toast.type}`} role="status">{toast.type === 'error' ? <X size={17} /> : <Check size={17} />}{toast.message}<button onClick={() => setToast(null)} aria-label="Dismiss"><X size={16} /></button></div>}
     </div>
