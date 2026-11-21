@@ -1,12 +1,20 @@
 import { useEffect, useState } from 'react'
 import { Check, Copy, KeyRound, Laptop, LoaderCircle, ShieldCheck, X } from 'lucide-react'
-import { supabase } from './supabase'
+import { supabase, isInvalidSessionError, clearLocalAuthSession } from './supabase'
 
 async function pairing(action, payload = {}, authenticated = false) {
   const headers = {}
   if (authenticated) {
     const { data, error } = await supabase.auth.getSession()
-    if (error || !data.session) throw new Error('Please sign in again.')
+    if (error || !data.session) throw new Error('Session expired. Sign in again before linking a device.')
+    const { error: authError } = await supabase.auth.getUser()
+    if (authError) {
+      if (isInvalidSessionError(authError)) {
+        clearLocalAuthSession()
+        throw new Error('This session was revoked. Refresh the page and sign in again.')
+      }
+      throw new Error('Unable to verify the current session. Try again.')
+    }
     headers.Authorization = 'Bearer ' + data.session.access_token
   }
   const { data, error } = await supabase.functions.invoke('device-pair', {
@@ -27,23 +35,42 @@ export function LinkDeviceModal({ onClose }) {
   const [working, setWorking] = useState(false)
   const [error, setError] = useState('')
 
+  // A code expires even if the status endpoint is unreachable.
+  useEffect(() => {
+    if (!pair?.expiresAt || ['approved','redeemed','denied','cancelled','expired'].includes(status)) return
+    const timeout = Math.max(0, new Date(pair.expiresAt).getTime() - Date.now())
+    const timer = setTimeout(() => setStatus('expired'), timeout)
+    return () => clearTimeout(timer)
+  }, [pair, status])
+
   async function create() {
     setWorking(true); setError('')
     try {
       const data = await pairing('create', {}, true)
       setPair(data); setStatus('ready'); setLabel('')
-    } catch (e) { setError(e.message) }
+    } catch (e) { setPair(null); setError(e.message) }
     finally { setWorking(false) }
   }
   useEffect(() => { create() }, [])
   useEffect(() => {
-    if (!pair || ['approved','denied','cancelled','redeemed','expired'].includes(status)) return
+    if (!pair || ['denied','cancelled','redeemed','expired'].includes(status)) return
     let active = true
+    let checking = false
     const timer = setInterval(async () => {
+      if (checking) return
+      if (Date.now() >= new Date(pair.expiresAt).getTime()) {
+        setStatus('expired')
+        return
+      }
+      checking = true
       try {
         const data = await pairing('owner-status', { pairingId: pair.pairingId }, true)
         if (active) { setStatus(data.status); setLabel(data.label || '') }
-      } catch (e) { if (active) setError(e.message) }
+      } catch (e) { if (active) {
+        setError(e.message)
+        if (/session|sign in|revoked/i.test(e.message)) setStatus('expired')
+      } }
+      finally { checking = false }
     }, 2500)
     return () => { active = false; clearInterval(timer) }
   }, [pair, status])
@@ -107,7 +134,7 @@ export function CodeSignIn({ onBack }) {
         code: code.replace(/\s/g, '').toUpperCase(), claimSecret,
         label: /mobile|android|iphone/i.test(navigator.userAgent) ? 'Phone browser' : 'Desktop browser'
       })
-      setPair({ pairingId: data.pairingId, claimSecret })
+      setPair({ pairingId: data.pairingId, claimSecret, expiresAt: data.expiresAt })
       setStatus('pending')
     } catch (e) { setError(e.message) }
     finally { setBusy(false) }
@@ -115,9 +142,11 @@ export function CodeSignIn({ onBack }) {
   useEffect(() => {
     if (!pair || status !== 'pending') return
     let active = true
+    const expiryTimer = setTimeout(() => { if (active) setStatus('expired') }, Math.max(0, new Date(pair.expiresAt).getTime() - Date.now()))
     let checking = false
     const timer = setInterval(async () => {
       if (checking) return
+      if (Date.now() >= new Date(pair.expiresAt).getTime()) { setStatus('expired'); return }
       checking = true
       try {
         const data = await pairing('claim-status', pair)
@@ -133,7 +162,7 @@ export function CodeSignIn({ onBack }) {
         if (active) { setError(e.message); setStatus('failed') }
       } finally { checking = false }
     }, 2500)
-    return () => { active = false; clearInterval(timer) }
+    return () => { active = false; clearInterval(timer); clearTimeout(expiryTimer) }
   }, [pair, status])
   return <div className="pair-login">
     <div className="modal-icon sky"><KeyRound size={22}/></div>
