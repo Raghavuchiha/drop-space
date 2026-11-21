@@ -9,7 +9,7 @@ const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
 const validOrigins = new Set(['https://shareprivate.netlify.app', 'http://localhost:5173', 'http://127.0.0.1:5173'])
 
 function response(body: Record<string, unknown>, status = 200, origin = '') {
-  return new Response(JSON.stringify(body), { status, headers: {
+  return new Response(status === 204 ? null : JSON.stringify(body), { status, headers: {
     'Content-Type': 'application/json', 'Cache-Control': 'no-store',
     'Access-Control-Allow-Origin': validOrigins.has(origin) ? origin : 'https://shareprivate.netlify.app',
     'Access-Control-Allow-Headers': 'authorization, apikey, content-type, x-client-info',
