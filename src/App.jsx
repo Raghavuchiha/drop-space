@@ -437,27 +437,22 @@ function App() {
     if (logoutInProgress.current) return
     logoutInProgress.current = true
     try {
-      // Local scope preserves sessions on phones, laptops, and other linked devices.
+      // Don't revoke other phones and laptops. This app supports linked devices.
       const { error } = await supabase.auth.signOut({ scope: 'local' })
       if (error && !isInvalidSessionError(error)) {
-        notify('Unable to sign out. Please retry: ' + error.message, 'error')
-        return
+        // A network/backend error can prevent server-side revocation. Always
+        // remove local credentials on explicit sign out; never keep a user
+        // trapped in a broken session.
+        console.warn('Local logout: remote session revocation could not be confirmed.', error)
       }
-      // If the server already revoked this session, clean up the stale local token.
-      if (error) clearLocalAuthSession()
+    } catch (error) {
+      console.warn('Local logout: remote session revocation could not be confirmed.', error)
+    } finally {
+      // Fail closed on this device, even if its stored session was revoked.
+      clearLocalAuthSession()
       setSession(null)
       setItems([])
       setPairModal(false)
-    } catch (error) {
-      if (isInvalidSessionError(error)) {
-        clearLocalAuthSession()
-        setSession(null)
-        setItems([])
-        setPairModal(false)
-      } else {
-        notify('Unable to sign out. Please retry: ' + (error.message || 'Unknown error'), 'error')
-      }
-    } finally {
       logoutInProgress.current = false
     }
   }
